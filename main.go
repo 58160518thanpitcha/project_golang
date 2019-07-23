@@ -7,7 +7,7 @@ import (
     "github.com/gorilla/mux"
 )
 
-type Numeric struct {
+type Numeric struct { //สร้าง struct
     ID        string   `json:"id,omitempty"`
     Firstnum  int   `json:"firstnum,omitempty"`
 	Lastnum   int   `json:"lastnum,omitempty"`
