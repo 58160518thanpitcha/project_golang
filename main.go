@@ -5,6 +5,10 @@ import (
     "log"
     "net/http"
     "github.com/gorilla/mux"
+    "time"
+	"github.com/yugabyte/gocql"
+	"fmt"
+	"strconv"
 )
 
 type Numeric struct { //สร้าง struct
@@ -33,14 +37,76 @@ func GetNumberEndpoint(w http.ResponseWriter, req *http.Request) { //ฟัง�
 }
 
 func CreateNumberEndpoint(w http.ResponseWriter, req *http.Request) {
+  // Connect to the cluster.
+  cluster := gocql.NewCluster("127.0.0.1", "127.0.0.2", "127.0.0.3")
+
+  // Use the same timeout as the Java driver.
+  cluster.Timeout = 12 * time.Second
+
+  // Create the session.
+  session, _ := cluster.CreateSession()
+  defer session.Close()
+
+  // Set up the keyspace and table.
+  if err := session.Query("CREATE KEYSPACE IF NOT EXISTS ybtest").Exec(); err != nil {
+	  log.Fatal(err)
+  }
+  fmt.Println("Created keyspace ybtest")
+
+
+  if err := session.Query(`DROP TABLE IF EXISTS ybtest.number`).Exec(); err != nil {
+	  log.Fatal(err)
+  }
+  var createStmt = `CREATE TABLE ybtest.number (id int PRIMARY KEY, 
+														 firstnum varchar, 
+														 lastnum varchar,
+														 result varchar)`;
+  if err := session.Query(createStmt).Exec(); err != nil {
+	  log.Fatal(err)
+  }
+  fmt.Println("Created table ybtest.number")
+
     params := mux.Vars(req)
 	var numeric Numeric
-    json.NewDecoder(req.Body).Decode(&numeric) //แปลงข้อมูลjsonที่รับมาเป็น struct
-    var result int = numeric.Firstnum+numeric.Lastnum; //คำนวณผลบวก
-    numeric.Result = result; //เก็บผลบวกใส่ไว้ใน struct
+	json.NewDecoder(req.Body).Decode(&numeric) //แปลงข้อมูลjsonที่รับมาเป็น struct 
+	// Insert into the table.
+	num1 := strconv.Itoa(numeric.Firstnum)
+	num2 := strconv.Itoa(numeric.Lastnum)
+	
+	var insertStmt string = "INSERT INTO ybtest.number(id,firstnum, lastnum)" + 
+		" VALUES(1,'"+num1+"', '"+num2+"')";
+	if err := session.Query(insertStmt).Exec(); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Inserted data: %s\n", insertStmt)
+
+	 // Read from the table.
+	 var firstnum string
+	 var lastnum string
+	 iter := session.Query(`SELECT firstnum, lastnum FROM ybtest.number WHERE id = 1`).Iter()//query ข้อมูลออกมา
+	 fmt.Printf("Query for id=1 returned: ");
+	 for iter.Scan(&firstnum, &lastnum) {
+		 fmt.Printf("Row[%s, %s]\n", firstnum, lastnum)
+	 }
+	 
+	 if err := iter.Close(); err != nil {
+		 log.Fatal(err)
+	 }
+	 n1, _ := strconv.Atoi(firstnum)
+	 n2, _ := strconv.Atoi(lastnum)
+	 
+	var result int = n1+n2; //คำนวณผลบวก
+	resultdb := strconv.Itoa(result)
+	var update string = "UPDATE ybtest.number SET result = '"+resultdb+"' WHERE id = 1"; //เพิ่มผลลัพธ์ที่่คำนวณได้เข้า db
+	if err := session.Query(update).Exec(); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Inserted Result: %s\n", update)
+	numeric.Result = result; //เก็บผลบวกใส่ไว้ใน struct
     numeric.ID = params["id"]
 	number = append(number, numeric)
-    json.NewEncoder(w).Encode(number)// แปลง struct เป็น json เพื่อแสดงผล
+	json.NewEncoder(w).Encode(number)// แปลง struct เป็น json เพื่อแสดงผล
+	
 }
 func DeleteNumberEndpoint(w http.ResponseWriter, req *http.Request) { //ฟังก์ชันDeleteข้อมูล
     params := mux.Vars(req)
@@ -52,8 +118,8 @@ func DeleteNumberEndpoint(w http.ResponseWriter, req *http.Request) { //ฟั�
     }
     json.NewEncoder(w).Encode(number)
 }
-
 func main() {
+    
     router := mux.NewRouter()
     router.HandleFunc("/list", GetAllNumberEndpoint).Methods("GET")
     router.HandleFunc("/list/{id}", GetNumberEndpoint).Methods("GET")
